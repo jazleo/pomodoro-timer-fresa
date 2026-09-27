@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pomodoro 🍓</title>
+<style>
+  :root{
+    --pink:#f8d7e0; --pink-deep:#e8899f; --red:#d8474d; --red-dk:#b8353c;
+    --cream:#fdf1e6; --ink:#4a2c2c; --green:#7a9b6e;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:'Georgia', 'Times New Roman', serif;
+    background:#ffffff;
+    color:var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    padding:calc(20px + env(safe-area-inset-top,0px)) 16px calc(20px + env(safe-area-inset-bottom,0px));
+    min-height:100%;
+  }
+  .card{
+    background:#fffdfb;
+    border:2px solid var(--pink-deep);
+    border-radius:20px;
+    padding:16px 14px 14px;
+    width:100%; max-width:230px;
+    text-align:center;
+    box-shadow:0 6px 18px rgba(180,90,100,0.16);
+  }
+  .title{
+    font-size:.85rem; font-weight:bold; letter-spacing:.5px;
+    color:var(--red-dk); margin:0 0 2px;
+  }
+  .subtitle{
+    font-size:.6rem; color:var(--pink-deep); margin:0 0 10px; font-style:italic;
+  }
+  .modes{
+    display:flex; gap:4px; justify-content:center; margin-bottom:10px; flex-wrap:wrap;
+  }
+  .mode-btn{
+    border:1.5px solid var(--pink-deep); background:var(--pink);
+    color:var(--red-dk); border-radius:999px; padding:3px 8px;
+    font-size:.56rem; font-family:inherit; cursor:pointer; font-weight:bold;
+  }
+  .mode-btn.active{ background:var(--red); color:#fff; border-color:var(--red-dk); }
+
+  .ring-wrap{ position:relative; width:130px; height:130px; margin:0 auto 10px; }
+  svg{ transform:rotate(-90deg); width:100%; height:100%; }
+  .ring-bg{ fill:none; stroke:#f3d8dc; stroke-width:10; }
+  .ring-fg{ fill:none; stroke:var(--red); stroke-width:10; stroke-linecap:round;
+    transition:stroke-dashoffset 0.3s linear; }
+  .time-label{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+  }
+  .time{ font-size:1.5rem; font-weight:bold; color:var(--ink); line-height:1; }
+  .phase{ font-size:.55rem; color:var(--pink-deep); margin-top:4px; letter-spacing:1px; text-transform:uppercase; }
+
+  .controls{ display:flex; gap:6px; justify-content:center; margin-bottom:8px; }
+  button.action{
+    font-family:inherit; font-size:.68rem; font-weight:bold;
+    border:none; border-radius:10px; padding:6px 12px; cursor:pointer;
+  }
+  #startPause{ background:var(--red); color:#fff; }
+  #startPause:active{ background:var(--red-dk); }
+  #reset{ background:var(--pink); color:var(--red-dk); }
+  #reset:active{ background:var(--pink-deep); color:#fff; }
+
+  .sessions{ font-size:.75rem; color:var(--green); }
+  .berry{ font-size:1rem; letter-spacing:2px; }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --cream:#2b1e1e;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <p class="title">🍓 Pomodoro</p>
+    <p class="subtitle">Para concentrarme (o al menos fingir que lo intento) 🍓</p>
+
+    <div class="modes">
+      <button class="mode-btn active" data-min="25" data-phase="Enfoque">Enfoque 25</button>
+      <button class="mode-btn" data-min="5" data-phase="Descanso corto">Descanso 5</button>
+      <button class="mode-btn" data-min="15" data-phase="Descanso largo">Descanso 15</button>
+    </div>
+
+    <div class="ring-wrap">
+      <svg viewBox="0 0 130 130">
+        <circle class="ring-bg" cx="65" cy="65" r="55"></circle>
+        <circle id="ringFg" class="ring-fg" cx="65" cy="65" r="55"></circle>
+      </svg>
+      <div class="time-label">
+        <div id="time" class="time">25:00</div>
+        <div id="phase" class="phase">Enfoque</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="startPause" class="action">Iniciar</button>
+      <button id="reset" class="action">Reiniciar</button>
+    </div>
+
+    <div class="sessions" style="font-size:.6rem;">
+      <span class="berry" id="berries" style="font-size:.75rem;">🍓</span><br>
+      <span id="sessionCount">0 sesiones hoy</span>
+    </div>
+  </div>
+
+<script>
+  const CIRC = 2 * Math.PI * 55;
+  const ringFg = document.getElementById('ringFg');
+  ringFg.style.strokeDasharray = CIRC;
+  ringFg.style.strokeDashoffset = 0;
+
+  const timeEl = document.getElementById('time');
+  const phaseEl = document.getElementById('phase');
+  const startPauseBtn = document.getElementById('startPause');
+  const resetBtn = document.getElementById('reset');
+  const berriesEl = document.getElementById('berries');
+  const sessionCountEl = document.getElementById('sessionCount');
+  const modeBtns = document.querySelectorAll('.mode-btn');
+
+  let totalSeconds = 25 * 60;
+  let remaining = totalSeconds;
+  let running = false;
+  let intervalId = null;
+  let currentPhase = 'Enfoque';
+  let completed = 0;
+
+  try {
+    const saved = localStorage.getItem('pomodoro_completed_v1');
+    if (saved) completed = parseInt(saved, 10) || 0;
+  } catch(e) {}
+  updateSessionLabel();
+
+  function updateSessionLabel(){
+    sessionCountEl.textContent = completed + (completed === 1 ? ' sesión completada hoy' : ' sesiones completadas hoy');
+    berriesEl.textContent = '🍓'.repeat(Math.min(completed, 8)) || '🍓';
+  }
+
+  function render(){
+    const m = Math.floor(remaining / 60).toString().padStart(2,'0');
+    const s = Math.floor(remaining % 60).toString().padStart(2,'0');
+    timeEl.textContent = m + ':' + s;
+    const progress = 1 - (remaining / totalSeconds);
+    ringFg.style.strokeDashoffset = CIRC * progress;
+  }
+
+  function tick(){
+    if (remaining <= 0){
+      running = false;
+      clearInterval(intervalId);
+      startPauseBtn.textContent = 'Iniciar';
+      if (currentPhase === 'Enfoque'){
+        completed += 1;
+        try { localStorage.setItem('pomodoro_completed_v1', String(completed)); } catch(e) {}
+        updateSessionLabel();
+      }
+      try {
+        if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(200);
+      } catch(e) {}
+      return;
+    }
+    remaining -= 1;
+    render();
+  }
+
+  startPauseBtn.addEventListener('click', () => {
+    if (running){
+      running = false;
+      clearInterval(intervalId);
+      startPauseBtn.textContent = 'Iniciar';
+    } else {
+      running = true;
+      startPauseBtn.textContent = 'Pausar';
+      intervalId = setInterval(tick, 1000);
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    running = false;
+    clearInterval(intervalId);
+    remaining = totalSeconds;
+    startPauseBtn.textContent = 'Iniciar';
+    render();
+  });
+
+  modeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      modeBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      running = false;
+      clearInterval(intervalId);
+      startPauseBtn.textContent = 'Iniciar';
+      totalSeconds = parseInt(btn.dataset.min, 10) * 60;
+      remaining = totalSeconds;
+      currentPhase = btn.dataset.phase;
+      phaseEl.textContent = currentPhase;
+      render();
+    });
+  });
+
+  render();
+</script>
+</body>
+</html>
